@@ -1,0 +1,59 @@
+#+TITLE: Mettre en oeuvre des techniques non-supervisées - P4.3 Segmenter des clients d'un site e-commerce
+
+
+Votre mission est d’aider les équipes d’Olist à comprendre les différents types
+d'utilisateurs. Vous utiliserez donc des méthodes non supervisées pour regrouper
+ensemble des clients de profils similaires. Ces catégories pourront être
+utilisées par l’équipe marketing pour mieux communiquer.
+
+
+Pour des raisons de confidentialité, Olist ne fournit pas beaucoup de données, à
+vous de fouiller dans celles dont vous disposez et de créer les meilleurs
+facteurs pour les exploiter.
+
+
+Les données : https://www.kaggle.com/olistbr/brazilian-ecommerce
+
+
+* Contexte du projet
+Vous êtes chargés de produire une segmentation des clients du site exploitable
+par l'équipe marketing. Vous devez donc trouver des groupes de clients avec des
+comportements homogènes.
+
+
+Pour cela, vous devrez :
+
+- récupérer les données, les explorer et les nettoyer
+
+- créer les indicateurs qui pourront permettre de segmenter les clients
+
+- faire une ACP pour comprendre les indicateurs qui seront les plus segmentant
+
+- tester des approches non-supervisées (CHA, DB SCAN, K means...) pour créer des segmentations
+
+- les interpréter et en déduire la plus pertinente
+
+- étudier la stabilité de cette segmentation
+​
+
+Vous pouvez exploiter le travail de veille réalisé fin octobre.
+
+* Modalités pédagogiques
+
+Travail en groupe de 3 à 4 personnes
+
+* Critères de performance
+
+Mettre en place le modèle d'apprentissage non supervisé adapté au problème métier
+Transformer les variables pertinentes d'un modèle d'apprentissage non supervisé
+Adapter les hyperparamètres d'un algorithme non supervisé afin de l'améliorer
+Évaluer les performances d’un modèle d'apprentissage non supervisé
+
+* Modalités d'évaluation
+
+Évaluation par le formateur sur la base de la présentation et du notebook
+
+* Livrables
+
+Une présentation pour restitution à la promo
+Un notebook reprenant toute l'analyse
