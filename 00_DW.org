@@ -1,0 +1,1213 @@
+#+TITLE:  P4.3 - Techniques non-supervisées
+#+PROPERTY: header-args:jupyter-python :session *Py* :results raw drawer :cache no :exports results :eval yes
+
+#+SUBTITLE:Segmenter des clients d'un site e-commerce
+#+AUTHOR: Laurent Siksous
+#+EMAIL: siksous@gmail.com
+# #+DATE: 
+#+DESCRIPTION: 
+#+KEYWORDS: 
+#+LANGUAGE:  fr
+
+# specifying the beamer startup gives access to a number of
+# keybindings which make configuring individual slides and components
+# of slides easier.  See, for instance, C-c C-b on a frame headline.
+#+STARTUP: beamer
+
+#+STARTUP: oddeven
+
+# we tell the exporter to use a specific LaTeX document class, as
+# defined in org-latex-classes.  By default, this does not include a
+# beamer entry so this needs to be defined in your configuration (see
+# the tutorial).
+#+LaTeX_CLASS: beamer
+#+LaTeX_CLASS_OPTIONS: [bigger] 
+
+#+LATEX_HEADER: \usepackage{listings}
+
+#+LATEX_HEADER: \definecolor{UBCblue}{rgb}{0.04706, 0.13725, 0.26667} % UBC Blue (primary)
+#+LATEX_HEADER: \usecolortheme[named=UBCblue]{structure}
+
+# Beamer supports alternate themes.  Choose your favourite here
+#+BEAMER_COLOR_THEME: dolphin
+#+BEAMER_FONT_THEME:  default
+#+BEAMER_INNER_THEME: [shadow]rounded
+#+BEAMER_OUTER_THEME: infolines
+
+# the beamer exporter expects to be told which level of headlines
+# defines the frames.  We use the first level headlines for sections
+# and the second (hence H:2) for frames.
+#+OPTIONS: ^:nil H:2 toc:t
+
+# the following allow us to selectively choose headlines to export or not
+#+SELECT_TAGS: export
+#+EXCLUDE_TAGS: noexport
+
+# for a column view of options and configurations for the individual
+# frames
+#+COLUMNS: %20ITEM %13BEAMER_env(Env) %6BEAMER_envargs(Args) %4BEAMER_col(Col) %7BEAMER_extra(Extra)
+
+# #+BEAMER_HEADER: \usebackgroundtemplate{\includegraphics[width=\paperwidth,height=\paperheight,opacity=.01]{img/bg2.jpeg}}
+# #+BEAMER_HEADER: \logo{\includegraphics[height=.5cm,keepaspectratio]{img/bti_logo2.png}\vspace{240pt}}
+# #+BEAMER_HEADER: \setbeamertemplate{background canvas}{\begin{tikzpicture}\node[opacity=.1]{\includegraphics [width=\paperwidth,height=\paperheight]{img/background.jpg}};\end{tikzpicture}}
+# #+BEAMER_HEADER: \logo{\includegraphics[width=\paperwidth,height=\paperheight,keepaspectratio]{img/background.jpg}}
+#+BEAMER_HEADER: \titlegraphic{\includegraphics[width=50]{img/logo.png}}
+# #+BEAMER_HEADER: \definecolor{ft}{RGB}{255, 241, 229}
+#+BEAMER_HEADER: \setbeamercolor{background canvas}{bg=ft}
+
+* Preamble                                                        
+** Emacs Setup                                                    :noexport:
+
+#+begin_src emacs-lisp
+(setq org-src-fontify-natively t)
+
+(setq lsp-semantic-tokens-enable t)
+(setq lsp-enable-symbol-highlighting t)
+
+(setq lsp-enable-file-watchers nil
+      read-process-output-max (* 1024 1024)
+      gc-cons-threshold 100000000
+      lsp-idle-delay 0.5
+      ;;
+      lsp-eldoc-hook nil
+      lsp-eldoc-enable-hover nil
+
+      ;;pas de fil d'ariane
+      lsp-headerline-breadcrumb-enable nil
+      ;; pas de imenu voir menu-list
+      lsp-enable-imenu nil
+      ;; lentille
+      lsp-lens-enable t
+ 
+      lsp-semantic-highlighting t
+      lsp-modeline-code-actions-enable t
+      )
+  
+(setq lsp-completion-provider :company
+      lsp-completion-show-detail t
+      lsp-completion-show-kind t)
+
+(setq lsp-ui-doc-enable t
+      lsp-ui-doc-show-with-mouse nil
+      lsp-ui-doc-show-with-cursor t
+      lsp-ui-doc-use-childframe t
+      
+      lsp-ui-sideline-diagnostic-max-line-length 80
+
+      ;; lsp-ui-imenu
+      lsp-ui-imenu-enable nil
+      ;; lsp-ui-peek
+      lsp-ui-peek-enable t
+      ;; lsp-ui-sideline
+      lsp-ui-sideline-enable t
+      lsp-ui-sideline-ignore-duplicate t
+      lsp-ui-sideline-show-symbol t
+      lsp-ui-sideline-show-hover t
+      lsp-ui-sideline-show-diagnostics t
+      lsp-ui-sideline-show-code-actions t
+      )
+
+(setq lsp-diagnostics-provider :none
+      lsp-modeline-diagnostics-enable nil
+      lsp-signature-auto-activate nil ;; you could manually request them via `lsp-signature-activate`
+      lsp-signature-render-documentation nil)
+#+end_src
+
+#+RESULTS:
+
+** Imports
+
+#+begin_src jupyter-python
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pickle
+
+from sklearn.preprocessing import StandardScaler, OneHotEncoder, FunctionTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA, NMF
+from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
+from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
+
+from imports.functions import *
+
+import re, nltk, spacy, string
+from translate import Translator
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[56]:
+:end:
+
+** Functions
+
+#+begin_src jupyter-python
+# Display all
+def display_all(df):
+    with pd.option_context("display.max_rows", 100, "display.max_columns", 100): 
+        display(df)
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[57]:
+:end:
+
+** Global variables
+
+#+begin_src jupyter-python
+RANDOM_STATE = 42
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[58]:
+:end:
+
+** Org                                                            :noexport:
+
+#+begin_src jupyter-python
+# Org-mode table formatter
+import IPython
+import tabulate
+
+class OrgFormatter(IPython.core.formatters.BaseFormatter):
+    format_type = IPython.core.formatters.Unicode('text/org')
+    print_method = IPython.core.formatters.ObjectName('_repr_org_')
+
+def pd_dataframe_to_org(df):
+    return tabulate.tabulate(df, headers='keys', tablefmt='orgtbl', showindex='always')
+
+ip = get_ipython()
+ip.display_formatter.formatters['text/org'] = OrgFormatter()
+
+f = ip.display_formatter.formatters['text/org']
+f.for_type_by_name('pandas.core.frame', 'DataFrame', pd_dataframe_to_org)
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[59]:
+:end:
+
+* Data Wrangling
+** Load Data
+
+#+begin_src shell :results output :exports both :eval no
+cd data ; ls -1 | xargs | sed "s/csv/csv,/g"
+#+end_src
+
+#+begin_src jupyter-python
+csv_files = ['olist_customers_dataset.csv',
+             'olist_geolocation_dataset.csv',
+             'olist_order_items_dataset.csv',
+             'olist_order_payments_dataset.csv',
+             'olist_order_reviews_dataset.csv',
+             'olist_orders_dataset.csv',
+             'olist_products_dataset.csv',
+             'olist_sellers_dataset.csv']
+
+for f in csv_files:
+    tname = re.sub('_dataset.csv', '', f)
+    tname = re.sub('olist_', '', tname)
+    exec(f"{tname} = pd.read_csv('data/{f}')")
+
+categories_en = pd.read_csv('data/product_category_name_translation.csv')
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[60]:
+:end:
+
+** Let's clean reviews
+
+#+begin_src jupyter-python
+def clean_text(text):
+    text = text.lower()  # Make the text lowercase
+    text = re.sub('\[.*\]','', text).strip() # Remove text in square brackets if any
+    text = text.translate(str.maketrans('', '', string.punctuation)) # Remove punctuation
+    text = re.sub('\S*\d\S*\s*','', text).strip()  # Remove words containing numbers
+    return text.strip()
+
+order_reviews['review_comment_message'] = order_reviews['review_comment_message'].fillna('NA')
+order_reviews.review_comment_message = order_reviews.review_comment_message.apply(lambda x: clean_text(x))
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[61]:
+:end:
+
+#+begin_src jupyter-python
+#!python -m spacy download pt_core_news_sm
+
+nlp = spacy.load("pt_core_news_sm")
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[62]:
+:end:
+
+** Lemmatizing the words
+
+#+begin_src jupyter-python
+# portugese stopwords
+stopwords = nlp.Defaults.stop_words
+
+# lemmatizer function
+def lemmatizer(text):
+    doc = nlp(text)
+    sent = [token.lemma_ for token in doc if not token.text in set(stopwords)]
+    return ' '.join(sent)
+
+order_reviews['lemma'] = order_reviews['review_comment_message'].apply(lambda x: lemmatizer(x))
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[63]:
+:end:
+
+** Save reviews
+
+#+begin_src jupyter-python
+order_reviews.to_pickle('reviews_df.pkl')
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[64]:
+:end:
+
+** Word cloud
+
+#+begin_src jupyter-python
+#Using a word cloud find the top 50 words by frequency among all the reviews
+#!pip install wordcloud
+from wordcloud import WordCloud
+
+wordcloud = WordCloud(stopwords=stopwords,max_words=50).generate(str(order_reviews.lemma))
+
+print(wordcloud)
+plt.figure(figsize=(10,6))
+plt.imshow(wordcloud)
+plt.axis('off')
+plt.show()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[65]:
+[[file:./obipy-resources/wE8329.png]]
+:end:
+
+** Unigrams, Bigram, Trigrams Frequency Analysis
+
+#+begin_src jupyter-python
+#top 30 bigram frequency among the reviews
+reviews_df = order_reviews.copy()
+
+def get_top_n_bigram(text, ngram=1, top=None):
+    vec = CountVectorizer(ngram_range=(ngram, ngram), stop_words=stopwords).fit(text)
+    bag_of_words = vec.transform(text)
+
+    sum_words = bag_of_words.sum(axis=0) 
+    words_freq = [(word, sum_words[0, idx]) for word, idx in vec.vocabulary_.items()]
+
+    words_freq =sorted(words_freq, key = lambda x: x[1], reverse=True)
+    return words_freq[:top]
+
+top_30_unigrams = get_top_n_bigram(reviews_df.lemma,ngram=1, top=30)
+top_30_bigrams = get_top_n_bigram(reviews_df.lemma,ngram=2, top=30)
+top_30_trigrams = get_top_n_bigram(reviews_df.lemma,ngram=3, top=30)
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[66]:
+:end:
+
+#+begin_src jupyter-python
+df1 = pd.DataFrame(top_30_unigrams, columns = ['unigram' , 'count'])
+plt.figure(figsize=(12,6))
+fig = sns.barplot(x=df1['unigram'], y=df1['count'])
+plt.xticks(rotation = 80)
+plt.show()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[67]:
+[[file:./obipy-resources/xqcmut.png]]
+:end:
+
+#+begin_src jupyter-python
+df2 = pd.DataFrame(top_30_bigrams, columns = ['bigram' , 'count'])
+plt.figure(figsize=(12,6))
+fig = sns.barplot(x=df2['bigram'], y=df2['count'])
+plt.xticks(rotation = 80)
+plt.show()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[68]:
+[[file:./obipy-resources/WKdx19.png]]
+:end:
+
+#+begin_src jupyter-python
+df3 = pd.DataFrame(top_30_trigrams, columns = ['trigram' , 'count'])
+plt.figure(figsize=(12,6))
+fig = sns.barplot(x=df3['trigram'], y=df3['count'])
+plt.xticks(rotation = 80)
+plt.show()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[69]:
+[[file:./obipy-resources/hrDmgg.png]]
+:end:
+
+
+#+begin_src jupyter-python
+tfidf = TfidfVectorizer(min_df=2, max_df=0.95, stop_words=stopwords)
+dtm = tfidf.fit_transform(reviews_df.lemma)
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[70]:
+:end:
+
+#+begin_src jupyter-python
+tfidf.get_feature_names()[:10]
+len(tfidf.get_feature_names())
+#reviews_df.review_score.value_counts()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[71]:
+: 4671
+:end:
+
+** Topic Modeling
+
+#+begin_src jupyter-python
+#Load nmf_model with the n_components 
+num_topics = 5
+
+#keep the random_state =40
+nmf_model = NMF(n_components=num_topics, random_state=42)
+
+W1 = nmf_model.fit_transform(dtm)
+H1 = nmf_model.components_
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[72]:
+:end:
+
+#+begin_src jupyter-python
+# Print the top 10 words
+n_words = 10
+feature_names = tfidf.get_feature_names()
+
+translator= Translator(from_lang='pt', to_lang="fr")
+
+topic_list = []
+for topic_idx, topic in enumerate(H1):
+    top_n = [feature_names[i]
+             for i in topic.argsort()
+             [-n_words:]][::-1]
+    top_features = ' '.join(top_n)
+    topic_list.append(f"topic_{'_'.join(top_n[:3])}") 
+
+    #print(translator.translate(f"Topic {topic_idx}: {top_features}"))
+    print(f"Topic {topic_idx}: {top_features}")
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[73]:
+:end:
+
+Sujet 0: livrer délai de livraison rapide super acheter prendre le jour boutique féliciter rapide
+Sujet 1 : qualité du produit super excellent comme à venir super attente super conforme
+Sujet 2 : recommander super magasin acheter excellent excellent comme vendeur rapide excellent
+Sujet 3 : arriver prévision de délai, emballer, s'assurer, attendre, jour, stipuler
+Sujet 4: recevoir acheter ne pas commander le produit de magasin de jour attendre que Lannister paie
+
+#+begin_src jupyter-python
+colnames = ["Topic" + str(i) for i in range(nmf_model.n_components)]
+docnames = ["Doc" + str(i) for i in range(len(reviews_df.lemma))]
+df_doc_topic = pd.DataFrame(np.round(W1, 2), columns=colnames, index=docnames)
+significant_topic = np.argmax(df_doc_topic.values, axis=1)
+df_doc_topic['dominant_topic'] = significant_topic
+reviews_df['topic'] = significant_topic
+score_by_topic = reviews_df.groupby(by='topic').agg({"review_score": 'median'})
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[74]:
+:end:
+
+#+begin_src jupyter-python
+score_by_topic.plot(figsize=(12,8), kind="bar",
+          title="Répartition des scores par topic",
+          ylabel="Mediane",
+          xlabel="Topic",
+          legend=False)
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[75]:
+: <AxesSubplot:title={'center':'Répartition des scores par topic'}, xlabel='Topic', ylabel='Mediane'>
+[[file:./obipy-resources/OEYbL6.png]]
+:end:
+
+** Products
+
+- Nous supprimons les colonnes inutiles concernant les dimensions des produits
+- Nous remplacons la catégorie du produit en portugais par sa traduction en anglais
+
+#+begin_src jupyter-python
+products = pd.merge(products, categories_en,
+                    how="left",
+                    on="product_category_name")
+
+del_features_list = ["product_category_name", "product_weight_g",
+                     "product_length_cm", "product_height_cm",
+                     "product_width_cm"]
+
+products.drop(del_features_list, axis=1, inplace=True)
+products = products.rename(columns={"product_category_name_english": "product_category_name"})
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[76]:
+:end:
+
+#+begin_src jupyter-python
+products.head()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[77]:
+|    | product_id                       |   product_name_lenght |   product_description_lenght |   product_photos_qty | product_category_name   |
+|----+----------------------------------+-----------------------+------------------------------+----------------------+-------------------------|
+|  0 | 1e9e8ef04dbcff4541ed26657ea517e5 |                    40 |                          287 |                    1 | perfumery               |
+|  1 | 3aa071139cb16b67ca9e5dea641aaa2f |                    44 |                          276 |                    1 | art                     |
+|  2 | 96bd76ec8810374ed1b65e291975717f |                    46 |                          250 |                    1 | sports_leisure          |
+|  3 | cef67bcfe19066a932b7673e239eb23d |                    27 |                          261 |                    1 | baby                    |
+|  4 | 9dc1a7de274444849c219cff195d0b71 |                    37 |                          402 |                    4 | housewares              |
+:end:
+
+** Orders
+
+#+begin_src jupyter-python
+order_items = pd.merge(order_items, orders,
+                       how="left",
+                       on="order_id")
+
+del_features_list = ["shipping_limit_date",
+                     "order_approved_at",
+                     "order_delivered_carrier_date"]
+
+order_items.drop(del_features_list,
+                 axis=1,
+                 inplace=True)
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[78]:
+:end:
+
+- Nous ne conservons que les commandes dont le statut est livré.
+
+#+begin_src jupyter-python
+order_items = order_items[order_items["order_status"] == "delivered"]
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[79]:
+:end:
+
+#+begin_src jupyter-python
+orders_per_days = order_items.groupby(order_items["order_purchase_timestamp"]\
+                                      .astype('datetime64[ns]').dt.date)\
+                                    .count()["order_id"]
+fig = plt.figure(figsize=(20, 8))
+ax = orders_per_days.plot(color="#00d994")
+ax.set_ylabel("count")
+plt.title(f"Evolution du nombre de commandes journalières\n")
+plt.show()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[80]:
+[[file:./obipy-resources/6PZJo7.png]]
+:end:
+
+
+- Modification du type des colonnes date.
+
+#+begin_src jupyter-python
+datetime_cols = ["order_purchase_timestamp", "order_delivered_customer_date", "order_estimated_delivery_date"]
+
+for col in datetime_cols:
+    order_items[col] = order_items[col].astype('datetime64[ns]')
+
+order_items.info()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[81]:
+:end:
+
+
+#+begin_src jupyter-python
+order_items.groupby(order_items['order_purchase_timestamp'].dt.month)\
+    .agg({"order_id": "nunique"})\
+    .plot(figsize=(12,8), kind="bar",
+          title="Répartition des commandes par mois",
+          ylabel="Nb orders",
+          xlabel="Month",
+          legend=False)
+plt.xticks(np.arange(0,12), ['Jan','Feb','Mar','Apr','May','Jun',
+                             'Jul','Aug','Sept','Oct','Nov','Dec'], 
+           rotation='horizontal')
+plt.show()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[82]:
+[[file:./obipy-resources/RdCLRB.png]]
+:end:
+
+#+begin_src jupyter-python
+order_items.groupby(order_items['order_purchase_timestamp'].dt.dayofweek)\
+    .agg({"order_id": "nunique"})\
+    .plot(figsize=(12,8), kind="bar",
+          title="Répartition des commandes par jour de la semaine",
+          ylabel="Nb orders",
+          xlabel="Day of week",
+          legend=False)
+plt.xticks(np.arange(0,7), ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'], rotation='horizontal')
+plt.show()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[83]:
+[[file:./obipy-resources/sCddpr.png]]
+:end:
+
+#+begin_src jupyter-python
+order_items.groupby(order_items['order_purchase_timestamp'].dt.hour)\
+    .agg({"order_id": "nunique"})\
+    .plot(figsize=(12,8), kind="bar",
+          title="Répartition des commandes par heure de la journée",
+          ylabel="Nb orders",
+          xlabel="Hour",
+          legend=False)
+plt.show()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[84]:
+[[file:./obipy-resources/wj2xEs.png]]
+:end:
+
+** Payments
+
+#+begin_src jupyter-python
+fig = plt.figure(figsize=(12, 8))
+sns.countplot(data=order_payments, x="payment_type",
+              edgecolor="black",
+              color="#00d994", alpha=0.7)
+plt.title(f"Les moyens de paiement utilisés sur le site\n")
+plt.show()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[85]:
+[[file:./obipy-resources/6OiwdP.png]]
+:end:
+
+- Avec plus de 80% des achats effectués en cartes de crédit, nous pourrions
+  écarter cette colonne
+
+#+begin_src jupyter-python
+group_payments = order_payments.groupby(by="order_id").agg(
+    {"payment_sequential": 'count',
+     "payment_installments": 'sum',
+     "payment_type": ' '.join})
+
+order_items = pd.merge(order_items, group_payments,
+                       how="left",
+                       on="order_id")
+
+order_items = order_items.rename(columns={
+    "payment_sequential": "nb_payment_sequential",
+    "payment_installments": "sum_payment_installments",
+    "payment_type": "payment_types"})
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[86]:
+:end:
+
+#+begin_src jupyter-python
+order_items.head()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[87]:
+|    | order_id                         |   order_item_id | product_id                       | seller_id                        |   price |   freight_value | customer_id                      | order_status   | order_purchase_timestamp   | order_delivered_customer_date   | order_estimated_delivery_date   |   nb_payment_sequential |   sum_payment_installments | payment_types   |
+|----+----------------------------------+-----------------+----------------------------------+----------------------------------+---------+-----------------+----------------------------------+----------------+----------------------------+---------------------------------+---------------------------------+-------------------------+----------------------------+-----------------|
+|  0 | 00010242fe8c5a6d1ba2dd792cb16214 |               1 | 4244733e06e7ecb4970a6e2683c13e61 | 48436dade18ac8b2bce089ec2a041202 |   58.9  |           13.29 | 3ce436f183e68e07877b285a838db11a | delivered      | 2017-09-13 08:59:02        | 2017-09-20 23:43:48             | 2017-09-29 00:00:00             |                       1 |                          2 | credit_card     |
+|  1 | 00018f77f2f0320c557190d7a144bdd3 |               1 | e5f2d52b802189ee658865ca93d83a8f | dd7ddc04e1b6c2c614352b383efe2d36 |  239.9  |           19.93 | f6dd3ec061db4e3987629fe6b26e5cce | delivered      | 2017-04-26 10:53:06        | 2017-05-12 16:04:24             | 2017-05-15 00:00:00             |                       1 |                          3 | credit_card     |
+|  2 | 000229ec398224ef6ca0657da4fc703e |               1 | c777355d18b72b67abbeef9df44fd0fd | 5b51032eddd242adc84c38acab88f23d |  199    |           17.87 | 6489ae5e4333f3693df5ad4372dab6d3 | delivered      | 2018-01-14 14:33:31        | 2018-01-22 13:19:16             | 2018-02-05 00:00:00             |                       1 |                          5 | credit_card     |
+|  3 | 00024acbcdf0a6daa1e931b038114c75 |               1 | 7634da152a4610f1595efa32f14722fc | 9d7a1d34a5052409006425275ba1c2b4 |   12.99 |           12.79 | d4eb9395c8c0431ee92fce09860c5a06 | delivered      | 2018-08-08 10:00:35        | 2018-08-14 13:32:39             | 2018-08-20 00:00:00             |                       1 |                          2 | credit_card     |
+|  4 | 00042b26cf59d7ce69dfabb4e55b4fd9 |               1 | ac6c3623068f30de03045865e4e10089 | df560393f3a51e74553ab94004ba5c87 |  199.9  |           18.14 | 58dbd0b2d70206bf40e62cd34e84d795 | delivered      | 2017-02-04 13:57:51        | 2017-03-01 16:42:31             | 2017-03-17 00:00:00             |                       1 |                          3 | credit_card     |
+:end:
+
+** Reviews continued
+
+#+begin_src jupyter-python
+reviews_df['topic'] = reviews_df['topic'].astype(str)
+
+group_reviews = reviews_df.groupby("order_id").agg({
+    "review_id": "count",
+    "topic": ''.join,
+    "review_score": "min"})
+
+order_items = pd.merge(order_items, group_reviews,
+                       how="left",
+                       on="order_id")
+
+order_items = order_items.rename(columns={
+    "review_id": "is_reviewed"})
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[88]:
+:end:
+
+#+begin_src jupyter-python
+order_items["is_reviewed"] = np.where(order_items["is_reviewed"] == 1,
+                                      True, False)
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[89]:
+:end:
+
+#+begin_src jupyter-python
+order_items.head()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[90]:
+|    | order_id                         |   order_item_id | product_id                       | seller_id                        |   price |   freight_value | customer_id                      | order_status   | order_purchase_timestamp   | order_delivered_customer_date   | order_estimated_delivery_date   |   nb_payment_sequential |   sum_payment_installments | payment_types   | is_reviewed   |   topic |   review_score |
+|----+----------------------------------+-----------------+----------------------------------+----------------------------------+---------+-----------------+----------------------------------+----------------+----------------------------+---------------------------------+---------------------------------+-------------------------+----------------------------+-----------------+---------------+---------+----------------|
+|  0 | 00010242fe8c5a6d1ba2dd792cb16214 |               1 | 4244733e06e7ecb4970a6e2683c13e61 | 48436dade18ac8b2bce089ec2a041202 |   58.9  |           13.29 | 3ce436f183e68e07877b285a838db11a | delivered      | 2017-09-13 08:59:02        | 2017-09-20 23:43:48             | 2017-09-29 00:00:00             |                       1 |                          2 | credit_card     | True          |       0 |              5 |
+|  1 | 00018f77f2f0320c557190d7a144bdd3 |               1 | e5f2d52b802189ee658865ca93d83a8f | dd7ddc04e1b6c2c614352b383efe2d36 |  239.9  |           19.93 | f6dd3ec061db4e3987629fe6b26e5cce | delivered      | 2017-04-26 10:53:06        | 2017-05-12 16:04:24             | 2017-05-15 00:00:00             |                       1 |                          3 | credit_card     | True          |       0 |              4 |
+|  2 | 000229ec398224ef6ca0657da4fc703e |               1 | c777355d18b72b67abbeef9df44fd0fd | 5b51032eddd242adc84c38acab88f23d |  199    |           17.87 | 6489ae5e4333f3693df5ad4372dab6d3 | delivered      | 2018-01-14 14:33:31        | 2018-01-22 13:19:16             | 2018-02-05 00:00:00             |                       1 |                          5 | credit_card     | True          |       3 |              5 |
+|  3 | 00024acbcdf0a6daa1e931b038114c75 |               1 | 7634da152a4610f1595efa32f14722fc | 9d7a1d34a5052409006425275ba1c2b4 |   12.99 |           12.79 | d4eb9395c8c0431ee92fce09860c5a06 | delivered      | 2018-08-08 10:00:35        | 2018-08-14 13:32:39             | 2018-08-20 00:00:00             |                       1 |                          2 | credit_card     | True          |       0 |              4 |
+|  4 | 00042b26cf59d7ce69dfabb4e55b4fd9 |               1 | ac6c3623068f30de03045865e4e10089 | df560393f3a51e74553ab94004ba5c87 |  199.9  |           18.14 | 58dbd0b2d70206bf40e62cd34e84d795 | delivered      | 2017-02-04 13:57:51        | 2017-03-01 16:42:31             | 2017-03-17 00:00:00             |                       1 |                          3 | credit_card     | True          |       3 |              5 |
+:end:
+
+** Customers
+
+#+begin_src jupyter-python
+order_items = pd.merge(order_items, customers,
+                       how="left",
+                       on="customer_id")
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[91]:
+:end:
+
+#+begin_src jupyter-python
+order_items.topic.fillna('', inplace=True)
+
+order_items.topic.map(lambda x: "".join(set(x))).unique()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[92]:
+#+BEGIN_EXAMPLE
+  array(['0', '3', '1', '4', '2', '', '02', '03', '01', '04', '23', '13',
+  '14', '34', '24', '21'], dtype=object)
+#+END_EXAMPLE
+:end:
+
+** Merge order items and products
+
+#+begin_src jupyter-python
+data = pd.merge(order_items, products,
+               how="left",
+               on="product_id")
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[93]:
+:end:
+
+** Delivery delays
+
+#+begin_src jupyter-python
+data["actual_delivery_delta_days"] = (data.order_delivered_customer_date
+                               - data.order_purchase_timestamp)\
+                              .dt.round('1d').dt.days
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[94]:
+:end:
+
+#+begin_src jupyter-python
+fig = plt.figure(figsize=(12, 8))
+plt.hist(data=data, x="actual_delivery_delta_days", bins=50)
+plt.xlabel("Délais de livraison moyen (jours)")
+plt.title(f"Répartition des délais de livraison moyens\n")
+plt.show()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[95]:
+[[file:./obipy-resources/2AlWGL.png]]
+:end:
+
+#+begin_src jupyter-python
+data["estimated_delivery_delta_days"] = (data.order_estimated_delivery_date
+                               - data.order_purchase_timestamp)\
+                              .dt.round('1d').dt.days
+
+data.drop("order_estimated_delivery_date", axis=1, inplace=True)
+data.drop("order_delivered_customer_date", axis=1, inplace=True)
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[96]:
+:end:
+
+#+begin_src jupyter-python
+data['actual_delivery_delta_days'] = data['actual_delivery_delta_days'].astype('Int64')
+data['estimated_delivery_delta_days'] = data['estimated_delivery_delta_days'].astype('Int64')
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[97]:
+:end:
+
+#+begin_src jupyter-python
+data.head(10)
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[98]:
+|    | order_id                         |   order_item_id | product_id                       | seller_id                        |   price |   freight_value | customer_id                      | order_status   | order_purchase_timestamp   |   nb_payment_sequential |   sum_payment_installments | payment_types   | is_reviewed   |   topic |   review_score | customer_unique_id               |   customer_zip_code_prefix | customer_city         | customer_state   |   product_name_lenght |   product_description_lenght |   product_photos_qty | product_category_name   |   actual_delivery_delta_days |   estimated_delivery_delta_days |
+|----+----------------------------------+-----------------+----------------------------------+----------------------------------+---------+-----------------+----------------------------------+----------------+----------------------------+-------------------------+----------------------------+-----------------+---------------+---------+----------------+----------------------------------+----------------------------+-----------------------+------------------+-----------------------+------------------------------+----------------------+-------------------------+------------------------------+---------------------------------|
+|  0 | 00010242fe8c5a6d1ba2dd792cb16214 |               1 | 4244733e06e7ecb4970a6e2683c13e61 | 48436dade18ac8b2bce089ec2a041202 |   58.9  |           13.29 | 3ce436f183e68e07877b285a838db11a | delivered      | 2017-09-13 08:59:02        |                       1 |                          2 | credit_card     | True          |       0 |              5 | 871766c5855e863f6eccc05f988b23cb |                      28013 | campos dos goytacazes | RJ               |                    58 |                          598 |                    4 | cool_stuff              |                            8 |                              16 |
+|  1 | 00018f77f2f0320c557190d7a144bdd3 |               1 | e5f2d52b802189ee658865ca93d83a8f | dd7ddc04e1b6c2c614352b383efe2d36 |  239.9  |           19.93 | f6dd3ec061db4e3987629fe6b26e5cce | delivered      | 2017-04-26 10:53:06        |                       1 |                          3 | credit_card     | True          |       0 |              4 | eb28e67c4c0b83846050ddfb8a35d051 |                      15775 | santa fe do sul       | SP               |                    56 |                          239 |                    2 | pet_shop                |                           16 |                              19 |
+|  2 | 000229ec398224ef6ca0657da4fc703e |               1 | c777355d18b72b67abbeef9df44fd0fd | 5b51032eddd242adc84c38acab88f23d |  199    |           17.87 | 6489ae5e4333f3693df5ad4372dab6d3 | delivered      | 2018-01-14 14:33:31        |                       1 |                          5 | credit_card     | True          |       3 |              5 | 3818d81c6709e39d06b2738a8d3a2474 |                      35661 | para de minas         | MG               |                    59 |                          695 |                    2 | furniture_decor         |                            8 |                              21 |
+|  3 | 00024acbcdf0a6daa1e931b038114c75 |               1 | 7634da152a4610f1595efa32f14722fc | 9d7a1d34a5052409006425275ba1c2b4 |   12.99 |           12.79 | d4eb9395c8c0431ee92fce09860c5a06 | delivered      | 2018-08-08 10:00:35        |                       1 |                          2 | credit_card     | True          |       0 |              4 | af861d436cfc08b2c2ddefd0ba074622 |                      12952 | atibaia               | SP               |                    42 |                          480 |                    1 | perfumery               |                            6 |                              12 |
+|  4 | 00042b26cf59d7ce69dfabb4e55b4fd9 |               1 | ac6c3623068f30de03045865e4e10089 | df560393f3a51e74553ab94004ba5c87 |  199.9  |           18.14 | 58dbd0b2d70206bf40e62cd34e84d795 | delivered      | 2017-02-04 13:57:51        |                       1 |                          3 | credit_card     | True          |       3 |              5 | 64b576fb70d441e8f1b2d7d446e483c5 |                      13226 | varzea paulista       | SP               |                    59 |                          409 |                    1 | garden_tools            |                           25 |                              40 |
+|  5 | 00048cc3ae777c65dbb7d2a0634bc1ea |               1 | ef92defde845ab8450f9d70c526ef70f | 6426d21aca402a131fc0a5d0960a3c90 |   21.9  |           12.69 | 816cbea969fe5b689b39cfc97a506742 | delivered      | 2017-05-15 21:42:34        |                       1 |                          1 | boleto          | True          |       0 |              4 | 85c835d128beae5b4ce8602c491bf385 |                      38017 | uberaba               | MG               |                    36 |                          558 |                    1 | housewares              |                            7 |                              21 |
+|  6 | 00054e8431b9d7675808bcb819fb4a32 |               1 | 8d4f2bb7e93e6710a28f34fa83ee7d28 | 7040e82f899a04d1b434b795a43b4617 |   19.9  |           11.85 | 32e2e6ab09e778d99bf2e0ecd4898718 | delivered      | 2017-12-10 11:53:48        |                       1 |                          1 | credit_card     | True          |       0 |              4 | 635d9ac1680f03288e72ada3a1035803 |                      16700 | guararapes            | SP               |                    52 |                          815 |                    1 | telephony               |                            8 |                              25 |
+|  7 | 000576fe39319847cbb9d288c5617fa6 |               1 | 557d850972a7d6f792fd18ae1400d9b6 | 5996cddab893a4652a15592fb58ab8db |  810    |           70.75 | 9ed5e522dd9dd85b4af4a077526d8117 | delivered      | 2018-07-04 12:08:27        |                       1 |                         10 | credit_card     | True          |       0 |              5 | fda4476abb6307ab3c415b7e6d026526 |                      11702 | praia grande          | SP               |                    39 |                         1310 |                    3 | garden_tools            |                            5 |                              20 |
+|  8 | 0005a1a1728c9d785b8e2b08b904576c |               1 | 310ae3c140ff94b03219ad0adc3c778f | a416b6a846a11724393025641d4edd5e |  145.95 |           11.65 | 16150771dfd4776261284213b89c304e | delivered      | 2018-03-19 18:40:33        |                       1 |                          3 | credit_card     | True          |       1 |              1 | 639d23421f5517f69d0c3d6e6564cf0e |                      11075 | santos                | SP               |                    59 |                          493 |                    1 | health_beauty           |                           10 |                               9 |
+|  9 | 0005f50442cb953dcd1d21e1fb923495 |               1 | 4535b0e1091c278dfd193e5a1d63b39f | ba143b05f0110f0dc71ad71b4466ce92 |   53.99 |           11.4  | 351d3cb2cee3c7fd0af6616c82df21d3 | delivered      | 2018-07-02 13:59:39        |                       1 |                          1 | credit_card     | True          |       0 |              4 | 0782c41380992a5a533489063df0eef6 |                       6636 | jandira               | SP               |                    52 |                         1192 |                    1 | books_technical         |                            2 |                              20 |
+:end:
+
+** Grouping categories
+
+- Nous effectuons un regroupement des catégories
+
+#+begin_src jupyter-python
+data['product_category'] = np.where((data['product_category_name'].str.contains("fashio|luggage")==True),
+                                    'fashion_clothing_accessories',
+                           np.where((data['product_category_name'].str.contains("health|beauty|perfum")==True),
+                                    'health_beauty',
+                           np.where((data['product_category_name'].str.contains("toy|baby|diaper")==True),
+                                     'toys_baby',
+                           np.where((data['product_category_name'].str.contains("book|cd|dvd|media")==True),
+                                     'books_cds_media',
+                           np.where((data['product_category_name'].str.contains("grocer|food|drink")==True), 
+                                     'groceries_food_drink',
+                           np.where((data['product_category_name'].str.contains("phon|compu|tablet|electro|consol")==True), 
+                                     'technology',
+                           np.where((data['product_category_name'].str.contains("home|furnitur|garden|bath|house|applianc")==True), 
+                                                                                          'home_furniture',
+                           np.where((data['product_category_name'].str.contains("flow|gift|stuff")==True),
+                                     'flowers_gifts',
+                           np.where((data['product_category_name'].str.contains("sport")==True),
+                                     'sport',
+                                     'other')))))))))
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[99]:
+:end:
+
+#+begin_src jupyter-python
+data.drop("product_category_name", axis=1, inplace=True)
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[100]:
+:end:
+
+#+begin_src jupyter-python
+categories_customers = data.groupby(["customer_unique_id", "product_category"])\
+                        .agg({"order_item_id": "count"}).unstack()
+categories_customers.columns = categories_customers.columns.droplevel(0)
+categories_customers.fillna(0, inplace=True)
+categories_customers["total_items"] = categories_customers.sum(axis=1)
+
+# ratio of total items
+for col in categories_customers.columns:
+    if (col != "total_items"):
+        categories_customers[col] = (categories_customers[col]/categories_customers["total_items"])
+
+categories_customers.reset_index(inplace=True)
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[101]:
+:end:
+
+#+begin_src jupyter-python
+categories_customers.info()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[102]:
+:end:
+
+#+begin_src jupyter-python
+plt.hist(data.groupby("customer_unique_id").agg({"order_id": "nunique"}), bins=50)
+plt.show()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[103]:
+[[file:./obipy-resources/CMyZdK.png]]
+:end:
+
+#+begin_src jupyter-python
+products_per_order = data.groupby(["customer_unique_id", "order_id"])\
+                        .agg({"order_item_id": "count"})
+products_per_order = products_per_order.groupby("customer_unique_id")\
+                        .agg({"order_item_id": "mean"})
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[104]:
+:end:
+
+#+begin_src jupyter-python
+plt.hist(products_per_order, bins=50)
+plt.show()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[105]:
+[[file:./obipy-resources/xEMg4k.png]]
+:end:
+
+
+#+begin_src jupyter-python
+data = data.groupby("customer_unique_id")\
+            .agg({"order_id": "nunique",
+                  "price": "sum",
+                  "freight_value": "sum",
+                  "payment_types": " ".join,
+                  "nb_payment_sequential": "mean", 
+                  "sum_payment_installments": "mean", 
+                  "review_score": "min",
+                  "topic": "".join,
+                  "estimated_delivery_delta_days": "mean",
+                  "actual_delivery_delta_days": "mean"})
+
+
+data = data.rename(columns={"order_id": "nb_orders",
+                            "price": "total_spend",
+                            "freight_value": "total_freight",
+                            "nb_payment_sequential": "mean_payment_sequential",
+                            "sum_payment_installments": "mean_payment_installments",
+                            "review_score": "min_review_score",
+                            "topic": "list_review_topic",
+                            "estimated_delivery_delta_days": "mean_estimated_delivery_days",
+                            "actual_delivery_delta_days": "mean_actual_delivery_days"})
+
+data = pd.merge(data, categories_customers,
+                how="left",
+                on="customer_unique_id")
+
+data = pd.merge(data, products_per_order,
+                how="left",
+                on="customer_unique_id")\
+        .rename(columns={"order_item_id": "mean_nb_items"})
+
+data = data.reset_index()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[108]:
+:end:
+
+#+begin_src jupyter-python
+data["freight_ratio"] = round(data["total_freight"] / (data["total_spend"] + data["total_freight"]),2)
+data["mean_price_order"] = round(data["total_spend"] / data["nb_orders"],2)
+data["total_spend"] = (data["total_spend"] + data["total_freight"])
+data.drop("total_freight", axis=1, inplace=True)
+
+data = data.reset_index()
+
+data.drop(["level_0", "index"], axis=1, inplace=True)
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[109]:
+:end:
+
+#+begin_src jupyter-python
+data.head()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[110]:
+|   | customer_unique_id               | nb_orders | total_spend | payment_types | mean_payment_sequential | mean_payment_installments | min_review_score | list_review_topic | mean_estimated_delivery_days | mean_actual_delivery_days | books_cds_media | fashion_clothing_accessories | flowers_gifts | groceries_food_drink | health_beauty | home_furniture | other | sport | technology | toys_baby | total_items | mean_nb_items | freight_ratio | mean_price_order |
+|---+----------------------------------+-----------+-------------+---------------+-------------------------+---------------------------+------------------+-------------------+------------------------------+---------------------------+-----------------+------------------------------+---------------+----------------------+---------------+----------------+-------+-------+------------+-----------+-------------+---------------+---------------+------------------|
+| 0 | 0000366f3b9a7992bf8c76cfdf3221e2 |         1 |       141.9 | credit_card   |                       1 |                         8 |                5 |                 2 |                           11 |                         6 |               0 |                            0 |             0 |                    0 |             0 |              1 |     0 |     0 |          0 |         0 |           1 |             1 |          0.08 |            129.9 |
+| 1 | 0000b849f77a49e4a4ce2b2a4ca5be3f |         1 |       27.19 | credit_card   |                       1 |                         1 |                4 |                 0 |                            8 |                         3 |               0 |                            0 |             0 |                    0 |             1 |              0 |     0 |     0 |          0 |         0 |           1 |             1 |           0.3 |             18.9 |
+| 2 | 0000f46a3911fa3c0805444483337064 |         1 |       86.22 | credit_card   |                       1 |                         8 |                3 |                 0 |                           27 |                        26 |               0 |                            0 |             0 |                    0 |             0 |              0 |     1 |     0 |          0 |         0 |           1 |             1 |           0.2 |               69 |
+| 3 | 0000f6ccb0745a6a4b88665a16c9f078 |         1 |       43.62 | credit_card   |                       1 |                         4 |                4 |                 0 |                           31 |                        20 |               0 |                            0 |             0 |                    0 |             0 |              0 |     0 |     0 |          1 |         0 |           1 |             1 |           0.4 |            25.99 |
+| 4 | 0004aac84e0df4da2b147fca70cf8255 |         1 |      196.89 | credit_card   |                       1 |                         6 |                5 |                 0 |                           20 |                        13 |               0 |                            0 |             0 |                    0 |             0 |              0 |     0 |     0 |          1 |         0 |           1 |             1 |          0.09 |              180 |
+:end:
+
+#+begin_src jupyter-python
+customers.drop("customer_id", axis=1, inplace=True)
+
+# Select the most frequents values for each customer
+customers_info = customers.groupby("customer_unique_id").agg(lambda x:x.value_counts().index[0])
+data = pd.merge(data, customers_info,
+                how="left",
+                on="customer_unique_id")
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[111]:
+:end:
+
+#+begin_src jupyter-python
+data.info()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[112]:
+:end:
+
+#+begin_src jupyter-python
+# Find features to fill and fillna with mode
+features_to_fill = data.isnull().sum()
+features_to_fill = list(features_to_fill[features_to_fill.values > 0].index)
+
+for f in features_to_fill:
+    data[f] = data[f].fillna(data[f].mode()[0])
+    print(f, data[f].mode()[0])
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[113]:
+:end:
+
+** States info
+
+#+begin_src jupyter-python
+wiki_url = "https://en.wikipedia.org/wiki/Federative_units_of_Brazil"
+states_table = pd.read_html(wiki_url)[1].set_index("Code")
+states_table
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[114]:
+| Code   | Flag and name       | Capital        | Largest city   |   Area(km2)[1] |   Population(2019)[2] |   Density (perkm2, 2019) |   GDP (R$millions, 2016)[3] |   HDI(2017)[4] |
+|--------+---------------------+----------------+----------------+----------------+-----------------------+--------------------------+-----------------------------+----------------|
+| AC     | Acre                | Rio Branco     | Rio Branco     |         167000 |                879000 |                     6.34 |                       15000 |          0.719 |
+| AL     | Alagoas             | Maceió         | Maceió         |          27843 |               3334000 |                   125.52 |                       50000 |          0.683 |
+| AP     | Amapá               | Macapá         | Macapá         |         142471 |                838000 |                     2.63 |                       12000 |          0.74  |
+| AM     | Amazonas            | Manaus         | Manaus         |        1559168 |               4147000 |                     2.58 |                       94000 |          0.733 |
+| BA     | Bahia               | Salvador       | Salvador       |         564723 |              14897000 |                    30.52 |                      262000 |          0.714 |
+| CE     | Ceará               | Fortaleza      | Fortaleza      |         148895 |               8843000 |                    60.33 |                      143000 |          0.735 |
+| DF     | Distrito Federal    | Brasília       | Brasília       |           5761 |               3124000 |                   493    |                      227000 |          0.85  |
+| ES     | Espírito Santo      | Vitória        | Serra          |          46074 |               3963000 |                    80.63 |                      113000 |          0.772 |
+| GO     | Goiás               | Goiânia        | Goiânia        |         340126 |               7006000 |                    18.46 |                      186000 |          0.769 |
+| MA     | Maranhão            | São Luís       | São Luís       |         329642 |               7082000 |                    19.03 |                       89000 |          0.687 |
+| MT     | Mato Grosso         | Cuiabá         | Cuiabá         |         903207 |               3491000 |                     4.01 |                      130000 |          0.774 |
+| MS     | Mato Grosso do Sul  | Campo Grande   | Campo Grande   |         357146 |               2786000 |                     7.83 |                       96000 |          0.766 |
+| MG     | Minas Gerais        | Belo Horizonte | Belo Horizonte |         586521 |              21174000 |                    31.72 |                      556000 |          0.787 |
+| PA     | Pará                | Belém          | Belém          |        1245759 |               8598000 |                     7.02 |                      147000 |          0.698 |
+| PB     | Paraíba             | João Pessoa    | João Pessoa    |          56467 |               4025000 |                    78.93 |                       54000 |          0.722 |
+| PR     | Paraná              | Curitiba       | Curitiba       |         199305 |              11440000 |                    43.46 |                      410000 |          0.792 |
+| PE     | Pernambuco          | Recife         | Recife         |          98068 |               9564000 |                   103.83 |                      172000 |          0.727 |
+| PI     | Piauí               | Teresina       | Teresina       |         251617 |               3267000 |                     9.73 |                       39000 |          0.697 |
+| RJ     | Rio de Janeiro      | Rio de Janeiro | Rio de Janeiro |          43750 |              17272000 |                   387.46 |                      666000 |          0.796 |
+| RN     | Rio Grande do Norte | Natal          | Natal          |          52810 |               3513000 |                    62.74 |                       69000 |          0.731 |
+| RS     | Rio Grande do Sul   | Porto Alegre   | Porto Alegre   |         281707 |              11385000 |                    36.84 |                      429000 |          0.787 |
+| RO     | Rondônia            | Porto Velho    | Porto Velho    |         237765 |               1784000 |                     7.34 |                       27000 |          0.725 |
+| RR     | Roraima             | Boa Vista      | Boa Vista      |         224274 |                629000 |                     2.54 |                       10000 |          0.752 |
+| SC     | Santa Catarina      | Florianópolis  | Joinville      |          95731 |               7158000 |                    69.74 |                      265000 |          0.808 |
+| SP     | São Paulo           | São Paulo      | São Paulo      |         248219 |              45926000 |                   175.73 |                     1930000 |          0.826 |
+| SE     | Sergipe             | Aracaju        | Aracaju        |          21927 |               2303000 |                    97.64 |                       40000 |          0.702 |
+| TO     | Tocantins           | Palmas         | Palmas         |         277720 |               1580000 |                     5.74 |                       28000 |          0.743 |
+:end:
+
+#+begin_src jupyter-python
+data = pd.merge(data, states_table[["Flag and name", "Density (perkm2, 2019)", "GDP (R$millions, 2016)[3]"]],
+                how="left",
+                left_on="customer_state",
+                right_on="Code")
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[115]:
+:end:
+
+#+begin_src jupyter-python
+data = data.rename(columns={"Flag and name": "customer_state_name",
+                            "Density (perkm2, 2019)": "customer_state_density",
+                            "GDP (R$millions, 2016)[3]": "customer_state_gdp"})
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[116]:
+:end:
+
+** Final Dataset
+
+#+begin_src jupyter-python
+data['most_frequent_review_topic'] = data['list_review_topic'].map(lambda x: max(set(x), key = x.count, default='5'))
+data.drop(columns='list_review_topic', axis=1, inplace=True)
+data['most_frequent_review_topic'].unique()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[117]:
+: array(['2', '0', '1', '4', '3', '5'], dtype=object)
+:end:
+
+#+begin_src jupyter-python
+data['payment_types'].fillna('other', inplace=True)
+
+data['payment_types'] = data['payment_types'].map(lambda x: ' '.join(sorted(set(x.split()))))
+data['payment_types'].unique()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[118]:
+#+BEGIN_EXAMPLE
+  array(['credit_card', 'boleto', 'credit_card voucher', 'debit_card',
+  'voucher', 'boleto credit_card', 'boleto voucher',
+  'credit_card debit_card', 'boleto debit_card',
+  'boleto credit_card voucher', 'boleto credit_card debit_card',
+  'debit_card voucher', 'other', 'credit_card debit_card voucher'],
+  dtype=object)
+#+END_EXAMPLE
+:end:
+
+
+#+begin_src jupyter-python
+data.head()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[119]:
+|    | customer_unique_id               |   nb_orders |   total_spend | payment_types   |   mean_payment_sequential |   mean_payment_installments |   min_review_score |   mean_estimated_delivery_days |   mean_actual_delivery_days |   books_cds_media |   fashion_clothing_accessories |   flowers_gifts |   groceries_food_drink |   health_beauty |   home_furniture |   other |   sport |   technology |   toys_baby |   total_items |   mean_nb_items |   freight_ratio |   mean_price_order |   customer_zip_code_prefix | customer_city   | customer_state   | customer_state_name   |   customer_state_density |   customer_state_gdp |   most_frequent_review_topic |
+|----+----------------------------------+-------------+---------------+-----------------+---------------------------+-----------------------------+--------------------+--------------------------------+-----------------------------+-------------------+--------------------------------+-----------------+------------------------+-----------------+------------------+---------+---------+--------------+-------------+---------------+-----------------+-----------------+--------------------+----------------------------+-----------------+------------------+-----------------------+--------------------------+----------------------+------------------------------|
+|  0 | 0000366f3b9a7992bf8c76cfdf3221e2 |           1 |        141.9  | credit_card     |                         1 |                           8 |                  5 |                             11 |                           6 |                 0 |                              0 |               0 |                      0 |               0 |                1 |       0 |       0 |            0 |           0 |             1 |               1 |            0.08 |             129.9  |                       7787 | cajamar         | SP               | São Paulo             |                   175.73 |              1930000 |                            2 |
+|  1 | 0000b849f77a49e4a4ce2b2a4ca5be3f |           1 |         27.19 | credit_card     |                         1 |                           1 |                  4 |                              8 |                           3 |                 0 |                              0 |               0 |                      0 |               1 |                0 |       0 |       0 |            0 |           0 |             1 |               1 |            0.3  |              18.9  |                       6053 | osasco          | SP               | São Paulo             |                   175.73 |              1930000 |                            0 |
+|  2 | 0000f46a3911fa3c0805444483337064 |           1 |         86.22 | credit_card     |                         1 |                           8 |                  3 |                             27 |                          26 |                 0 |                              0 |               0 |                      0 |               0 |                0 |       1 |       0 |            0 |           0 |             1 |               1 |            0.2  |              69    |                      88115 | sao jose        | SC               | Santa Catarina        |                    69.74 |               265000 |                            0 |
+|  3 | 0000f6ccb0745a6a4b88665a16c9f078 |           1 |         43.62 | credit_card     |                         1 |                           4 |                  4 |                             31 |                          20 |                 0 |                              0 |               0 |                      0 |               0 |                0 |       0 |       0 |            1 |           0 |             1 |               1 |            0.4  |              25.99 |                      66812 | belem           | PA               | Pará                  |                     7.02 |               147000 |                            0 |
+|  4 | 0004aac84e0df4da2b147fca70cf8255 |           1 |        196.89 | credit_card     |                         1 |                           6 |                  5 |                             20 |                          13 |                 0 |                              0 |               0 |                      0 |               0 |                0 |       0 |       0 |            1 |           0 |             1 |               1 |            0.09 |             180    |                      18040 | sorocaba        | SP               | São Paulo             |                   175.73 |              1930000 |                            0 |
+:end:
+
+#+begin_src jupyter-python
+data.to_csv("data/olist-prepared.csv", index=False)
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[120]:
+:end:
+
+
+* Local Variables                                                  :noexport:
+# Local Variables:
+# eval: (setenv "PATH" "/Library/TeX/texbin/:$PATH" t)
+# org-ref-default-bibliography: ("./olist.bib")
+# End:
+
+
+
+
+
+
+
+

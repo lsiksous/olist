@@ -1,0 +1,730 @@
+#+TITLE: P4.3 - Techniques non-supervisées
+#+PROPERTY: header-args:jupyter-python :session *Py* :results raw drawer :cache no :exports results :async yes
+
+#+SUBTITLE: Segmenter des clients d'un site e-commerce
+#+AUTHOR: Laurent Siksous
+#+EMAIL: siksous@gmail.com
+# #+DATE: 
+#+DESCRIPTION: 
+#+KEYWORDS: 
+#+LANGUAGE:  fr
+
+# specifying the beamer startup gives access to a number of
+# keybindings which make configuring individual slides and components
+# of slides easier.  See, for instance, C-c C-b on a frame headline.
+#+STARTUP: beamer
+
+#+STARTUP: oddeven
+
+# we tell the exporter to use a specific LaTeX document class, as
+# defined in org-latex-classes.  By default, this does not include a
+# beamer entry so this needs to be defined in your configuration (see
+# the tutorial).
+#+LaTeX_CLASS: beamer
+#+LaTeX_CLASS_OPTIONS: [bigger] 
+
+#+LATEX_HEADER: \usepackage{listings}
+
+#+LATEX_HEADER: \definecolor{UBCblue}{rgb}{0.04706, 0.13725, 0.26667} % UBC Blue (primary)
+#+LATEX_HEADER: \usecolortheme[named=UBCblue]{structure}
+
+# Beamer supports alternate themes.  Choose your favourite here
+#+BEAMER_COLOR_THEME: dolphin
+#+BEAMER_FONT_THEME:  default
+#+BEAMER_INNER_THEME: [shadow]rounded
+#+BEAMER_OUTER_THEME: infolines
+
+# the beamer exporter expects to be told which level of headlines
+# defines the frames.  We use the first level headlines for sections
+# and the second (hence H:2) for frames.
+#+OPTIONS: ^:nil H:2 toc:t
+
+# the following allow us to selectively choose headlines to export or not
+#+SELECT_TAGS: export
+#+EXCLUDE_TAGS: noexport
+
+# for a column view of options and configurations for the individual
+# frames
+#+COLUMNS: %20ITEM %13BEAMER_env(Env) %6BEAMER_envargs(Args) %4BEAMER_col(Col) %7BEAMER_extra(Extra)
+
+# #+BEAMER_HEADER: \usebackgroundtemplate{\includegraphics[width=\paperwidth,height=\paperheight,opacity=.01]{img/bg2.jpeg}}
+# #+BEAMER_HEADER: \logo{\includegraphics[height=.5cm,keepaspectratio]{img/bti_logo2.png}\vspace{240pt}}
+# #+BEAMER_HEADER: \setbeamertemplate{background canvas}{\begin{tikzpicture}\node[opacity=.1]{\includegraphics [width=\paperwidth,height=\paperheight]{img/background.jpg}};\end{tikzpicture}}
+# #+BEAMER_HEADER: \logo{\includegraphics[width=\paperwidth,height=\paperheight,keepaspectratio]{img/background.jpg}}
+#+BEAMER_HEADER: \titlegraphic{\includegraphics[width=50]{img/logo.png}}
+# #+BEAMER_HEADER: \definecolor{ft}{RGB}{255, 241, 229}
+#+BEAMER_HEADER: \setbeamercolor{background canvas}{bg=ft}
+
+* Preamble                                                        
+** Emacs Setup                                                    :noexport:
+
+#+begin_src emacs-lisp
+(setq org-src-fontify-natively t)
+
+(setq lsp-semantic-tokens-enable t)
+(setq lsp-enable-symbol-highlighting t)
+
+(setq lsp-enable-file-watchers nil
+      read-process-output-max (* 1024 1024)
+      gc-cons-threshold 100000000
+      lsp-idle-delay 0.5
+      ;;
+      lsp-eldoc-hook nil
+      lsp-eldoc-enable-hover nil
+
+      ;;pas de fil d'ariane
+      lsp-headerline-breadcrumb-enable nil
+      ;; pas de imenu voir menu-list
+      lsp-enable-imenu nil
+      ;; lentille
+      lsp-lens-enable t
+ 
+      lsp-semantic-highlighting t
+      lsp-modeline-code-actions-enable t
+      )
+  
+(setq lsp-completion-provider :company
+      lsp-completion-show-detail t
+      lsp-completion-show-kind t)
+
+(setq lsp-ui-doc-enable t
+      lsp-ui-doc-show-with-mouse nil
+      lsp-ui-doc-show-with-cursor t
+      lsp-ui-doc-use-childframe t
+      
+      lsp-ui-sideline-diagnostic-max-line-length 80
+
+      ;; lsp-ui-imenu
+      lsp-ui-imenu-enable nil
+      ;; lsp-ui-peek
+      lsp-ui-peek-enable t
+      ;; lsp-ui-sideline
+      lsp-ui-sideline-enable t
+      lsp-ui-sideline-ignore-duplicate t
+      lsp-ui-sideline-show-symbol t
+      lsp-ui-sideline-show-hover t
+      lsp-ui-sideline-show-diagnostics t
+      lsp-ui-sideline-show-code-actions t
+      )
+
+(setq lsp-diagnostics-provider :none
+      lsp-modeline-diagnostics-enable nil
+      lsp-signature-auto-activate nil ;; you could manually request them via `lsp-signature-activate`
+      lsp-signature-render-documentation nil)
+#+end_src
+
+#+RESULTS:
+
+** Imports
+
+#+begin_src jupyter-python
+%matplotlib inline
+import pandas as pd
+import numpy as np
+from pandas.core.arrays import categorical
+import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+import seaborn as sns
+import pickle
+
+from sklearn.preprocessing import PowerTransformer, StandardScaler
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
+from sklearn.manifold import TSNE
+import umap
+import umap.plot
+
+from kmodes.kprototypes import KPrototypes
+from lightgbm import LGBMClassifier
+import shap
+from sklearn.model_selection import cross_val_score
+
+from imports.functions import *
+from imports.preprocessing import *
+
+from tqdm import tqdm
+import warnings
+warnings.filterwarnings('ignore')
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[1]:
+:end:
+
+** Functions
+
+
+#+begin_src jupyter-python
+# Display all
+def display_all(df):
+    with pd.option_context("display.max_rows", 100, "display.max_columns", 100): 
+        display(df)
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[2]:
+:end:
+
+** Global variables
+
+#+begin_src jupyter-python
+RANDOM_STATE = 42
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[3]:
+:end:
+
+** Pandas Setup
+
+#+begin_src jupyter-python
+pd.set_option('display.max_rows', 100)
+pd.set_option('display.max_columns', 100)
+pd.set_option('display.width', 50)
+pd.set_option('display.max_colwidth', 50)
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[4]:
+:end:
+
+** Org                                                            :noexport:
+
+#+begin_src jupyter-python
+# Org-mode table formatter
+import IPython
+import tabulate
+
+class OrgFormatter(IPython.core.formatters.BaseFormatter):
+    format_type = IPython.core.formatters.Unicode('text/org')
+    print_method = IPython.core.formatters.ObjectName('_repr_org_')
+
+def pd_dataframe_to_org(df):
+    return tabulate.tabulate(df, headers='keys', tablefmt='orgtbl', showindex='always')
+
+ip = get_ipython()
+ip.display_formatter.formatters['text/org'] = OrgFormatter()
+
+f = ip.display_formatter.formatters['text/org']
+f.for_type_by_name('pandas.core.frame', 'DataFrame', pd_dataframe_to_org)
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[5]:
+:end:
+
+* Pre-processing
+** Load Data
+
+#+begin_src jupyter-python
+df = pd.read_csv('data/olist-prepared.csv')
+
+df.set_index('customer_unique_id', inplace=True)
+
+df.drop(['customer_state_density', 'customer_state_gdp'], axis=1, inplace=True)
+df.head(10)
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[6]:
+| customer_unique_id               |   nb_orders |   total_spend | payment_types   |   mean_payment_sequential |   mean_payment_installments |   min_review_score |   mean_estimated_delivery_days |   mean_actual_delivery_days |   books_cds_media |   fashion_clothing_accessories |   flowers_gifts |   groceries_food_drink |   health_beauty |   home_furniture |   other |   sport |   technology |   toys_baby |   total_items |   mean_nb_items |   freight_ratio |   mean_price_order |   customer_zip_code_prefix | customer_city   | customer_state   | customer_state_name   |   most_frequent_review_topic |
+|----------------------------------+-------------+---------------+-----------------+---------------------------+-----------------------------+--------------------+--------------------------------+-----------------------------+-------------------+--------------------------------+-----------------+------------------------+-----------------+------------------+---------+---------+--------------+-------------+---------------+-----------------+-----------------+--------------------+----------------------------+-----------------+------------------+-----------------------+------------------------------|
+| 0000366f3b9a7992bf8c76cfdf3221e2 |           1 |        141.9  | credit_card     |                         1 |                           8 |                  5 |                             11 |                           6 |                 0 |                              0 |               0 |                      0 |               0 |                1 |       0 |       0 |            0 |           0 |             1 |               1 |            0.08 |             129.9  |                       7787 | cajamar         | SP               | São Paulo             |                            2 |
+| 0000b849f77a49e4a4ce2b2a4ca5be3f |           1 |         27.19 | credit_card     |                         1 |                           1 |                  4 |                              8 |                           3 |                 0 |                              0 |               0 |                      0 |               1 |                0 |       0 |       0 |            0 |           0 |             1 |               1 |            0.3  |              18.9  |                       6053 | osasco          | SP               | São Paulo             |                            0 |
+| 0000f46a3911fa3c0805444483337064 |           1 |         86.22 | credit_card     |                         1 |                           8 |                  3 |                             27 |                          26 |                 0 |                              0 |               0 |                      0 |               0 |                0 |       1 |       0 |            0 |           0 |             1 |               1 |            0.2  |              69    |                      88115 | sao jose        | SC               | Santa Catarina        |                            0 |
+| 0000f6ccb0745a6a4b88665a16c9f078 |           1 |         43.62 | credit_card     |                         1 |                           4 |                  4 |                             31 |                          20 |                 0 |                              0 |               0 |                      0 |               0 |                0 |       0 |       0 |            1 |           0 |             1 |               1 |            0.4  |              25.99 |                      66812 | belem           | PA               | Pará                  |                            0 |
+| 0004aac84e0df4da2b147fca70cf8255 |           1 |        196.89 | credit_card     |                         1 |                           6 |                  5 |                             20 |                          13 |                 0 |                              0 |               0 |                      0 |               0 |                0 |       0 |       0 |            1 |           0 |             1 |               1 |            0.09 |             180    |                      18040 | sorocaba        | SP               | São Paulo             |                            0 |
+| 0004bd2a26a76fe21f786e4fbd80607f |           1 |        166.98 | credit_card     |                         1 |                           8 |                  4 |                             13 |                           2 |                 0 |                              0 |               0 |                      0 |               0 |                1 |       0 |       0 |            0 |           0 |             1 |               1 |            0.08 |             154    |                       5036 | sao paulo       | SP               | São Paulo             |                            0 |
+| 00050ab1314c0e55a6ca13cf7181fecf |           1 |         35.38 | boleto          |                         1 |                           1 |                  4 |                             18 |                           7 |                 0 |                              0 |               0 |                      0 |               0 |                0 |       0 |       0 |            1 |           0 |             1 |               1 |            0.21 |              27.99 |                      13084 | campinas        | SP               | São Paulo             |                            0 |
+| 00053a61a98854899e70ed204dd4bafe |           1 |        419.18 | credit_card     |                         1 |                           3 |                  1 |                             26 |                          16 |                 0 |                              0 |               0 |                      0 |               0 |                0 |       0 |       1 |            0 |           0 |             2 |               2 |            0.09 |             382    |                      80410 | curitiba        | PR               | Paraná                |                            1 |
+| 0005e1862207bf6ccc02e4228effd9a0 |           1 |        150.12 | credit_card     |                         1 |                           3 |                  4 |                             32 |                           4 |                 0 |                              1 |               0 |                      0 |               0 |                0 |       0 |       0 |            0 |           0 |             1 |               1 |            0.1  |             135    |                      25966 | teresopolis     | RJ               | Rio de Janeiro        |                            0 |
+| 0005ef4cd20d2893f0d9fbd94d3c0d97 |           1 |        129.76 | credit_card     |                         1 |                           4 |                  1 |                             22 |                          54 |                 0 |                              0 |               0 |                      0 |               0 |                0 |       0 |       1 |            0 |           0 |             1 |               1 |            0.19 |             104.9  |                      65060 | sao luis        | MA               | Maranhão              |                            4 |
+:end:
+
+
+#+begin_src jupyter-python :results output
+df.info()
+#+end_src
+
+** Casting variables
+
+#+begin_src jupyter-python
+#df.select_dtypes(exclude='object').columns
+departments = ['books_cds_media', 'fashion_clothing_accessories', 'flowers_gifts',
+                'groceries_food_drink', 'health_beauty', 'home_furniture', 'other',
+                'sport', 'technology', 'toys_baby']
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[7]:
+:end:
+
+#+begin_src jupyter-python
+df['department'] = df[departments].idxmax(axis=1)
+df.drop(departments, axis=1, inplace=True)
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[8]:
+:end:
+
+
+#+begin_src jupyter-python :results output
+df.customer_zip_code_prefix = df.customer_zip_code_prefix.astype('str')
+df.most_frequent_review_topic = df.most_frequent_review_topic.astype('category')
+df.payment_types = df.payment_types.astype('category')
+df.department = df.department.astype('category')
+df.customer_state = df.customer_state.astype('category')
+
+df.info()
+#+end_src
+
+#+RESULTS:
+:results:
+<class 'pandas.core.frame.DataFrame'>
+Index: 93358 entries, 0000366f3b9a7992bf8c76cfdf3221e2 to ffffd2657e2aad2907e67c3e9daecbeb
+Data columns (total 18 columns):
+ #   Column                        Non-Null Count  Dtype   
+---  ------                        --------------  -----   
+ 0   nb_orders                     93358 non-null  int64   
+ 1   total_spend                   93358 non-null  float64 
+ 2   payment_types                 93358 non-null  category
+ 3   mean_payment_sequential       93358 non-null  float64 
+ 4   mean_payment_installments     93358 non-null  float64 
+ 5   min_review_score              93358 non-null  float64 
+ 6   mean_estimated_delivery_days  93358 non-null  float64 
+ 7   mean_actual_delivery_days     93358 non-null  float64 
+ 8   total_items                   93358 non-null  float64 
+ 9   mean_nb_items                 93358 non-null  float64 
+ 10  freight_ratio                 93358 non-null  float64 
+ 11  mean_price_order              93358 non-null  float64 
+ 12  customer_zip_code_prefix      93358 non-null  object  
+ 13  customer_city                 93358 non-null  object  
+ 14  customer_state                93358 non-null  category
+ 15  customer_state_name           93358 non-null  object  
+ 16  most_frequent_review_topic    93358 non-null  category
+ 17  department                    93358 non-null  category
+dtypes: category(4), float64(10), int64(1), object(3)
+memory usage: 11.0+ MB
+:end:
+
+
+#+begin_src jupyter-python
+categorical = df.select_dtypes(include='category')
+numerical = df.select_dtypes(include='float64')
+litteral = df.select_dtypes(include='object')
+
+dfk = df.drop(litteral.columns, axis=1)
+
+cat_idx = []
+for c in categorical:
+    cat_idx.append(dfk.columns.get_loc(c))
+
+cat_idx
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[10]:
+: [2, 12, 13, 14]
+:end:
+
+* UMAP
+
+#+begin_src jupyter-python
+for c in numerical:
+    scaler = PowerTransformer()
+    #scaler = StandardScaler()
+    numerical.loc[:, c] = scaler.fit_transform(np.array(df[c]).reshape(-1, 1))
+
+numerical.head()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[11]:
+| customer_unique_id               |   total_spend |   mean_payment_sequential |   mean_payment_installments |   min_review_score |   mean_estimated_delivery_days |   mean_actual_delivery_days |   total_items |   mean_nb_items |   freight_ratio |   mean_price_order |
+|----------------------------------+---------------+---------------------------+-----------------------------+--------------------+--------------------------------+-----------------------------+---------------+-----------------+-----------------+--------------------|
+| 0000366f3b9a7992bf8c76cfdf3221e2 |      0.374093 |              -6.93889e-18 |                    1.51797  |           0.775131 |                      -1.58734  |                   -0.779069 |     -0.376858 |         -0.3363 |       -1.20296  |           0.488264 |
+| 0000b849f77a49e4a4ce2b2a4ca5be3f |     -1.96081  |              -6.93889e-18 |                   -0.980999 |          -0.547104 |                      -2.08703  |                   -1.70787  |     -0.376858 |         -0.3363 |        0.896971 |          -1.70225  |
+| 0000f46a3911fa3c0805444483337064 |     -0.252552 |              -6.93889e-18 |                    1.51797  |          -1.3212   |                       0.453882 |                    1.44499  |     -0.376858 |         -0.3363 |        0.13626  |          -0.195004 |
+| 0000f6ccb0745a6a4b88665a16c9f078 |     -1.21624  |              -6.93889e-18 |                    0.94405  |          -0.547104 |                       0.87373  |                    1.03269  |     -0.376858 |         -0.3363 |        1.4507   |          -1.31973  |
+| 0004aac84e0df4da2b147fca70cf8255 |      0.752605 |              -6.93889e-18 |                    1.31269  |           0.775131 |                      -0.350406 |                    0.365811 |     -0.376858 |         -0.3363 |       -1.06748  |           0.82579  |
+:end:
+
+#+begin_src jupyter-python
+categorical = pd.get_dummies(categorical)
+categorical.head()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[12]:
+| customer_unique_id               |   payment_types_boleto |   payment_types_boleto credit_card |   payment_types_boleto credit_card debit_card |   payment_types_boleto credit_card voucher |   payment_types_boleto debit_card |   payment_types_boleto voucher |   payment_types_credit_card |   payment_types_credit_card debit_card |   payment_types_credit_card debit_card voucher |   payment_types_credit_card voucher |   payment_types_debit_card |   payment_types_debit_card voucher |   payment_types_other |   payment_types_voucher |   customer_state_AC |   customer_state_AL |   customer_state_AM |   customer_state_AP |   customer_state_BA |   customer_state_CE |   customer_state_DF |   customer_state_ES |   customer_state_GO |   customer_state_MA |   customer_state_MG |   customer_state_MS |   customer_state_MT |   customer_state_PA |   customer_state_PB |   customer_state_PE |   customer_state_PI |   customer_state_PR |   customer_state_RJ |   customer_state_RN |   customer_state_RO |   customer_state_RR |   customer_state_RS |   customer_state_SC |   customer_state_SE |   customer_state_SP |   customer_state_TO |   most_frequent_review_topic_0 |   most_frequent_review_topic_1 |   most_frequent_review_topic_2 |   most_frequent_review_topic_3 |   most_frequent_review_topic_4 |   most_frequent_review_topic_5 |   department_books_cds_media |   department_fashion_clothing_accessories |   department_flowers_gifts |   department_groceries_food_drink |   department_health_beauty |   department_home_furniture |   department_other |   department_sport |   department_technology |   department_toys_baby |
+|----------------------------------+------------------------+------------------------------------+-----------------------------------------------+--------------------------------------------+-----------------------------------+--------------------------------+-----------------------------+----------------------------------------+------------------------------------------------+-------------------------------------+----------------------------+------------------------------------+-----------------------+-------------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+--------------------------------+--------------------------------+--------------------------------+--------------------------------+--------------------------------+--------------------------------+------------------------------+-------------------------------------------+----------------------------+-----------------------------------+----------------------------+-----------------------------+--------------------+--------------------+-------------------------+------------------------|
+| 0000366f3b9a7992bf8c76cfdf3221e2 |                      0 |                                  0 |                                             0 |                                          0 |                                 0 |                              0 |                           1 |                                      0 |                                              0 |                                   0 |                          0 |                                  0 |                     0 |                       0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   1 |                   0 |                              0 |                              0 |                              1 |                              0 |                              0 |                              0 |                            0 |                                         0 |                          0 |                                 0 |                          0 |                           1 |                  0 |                  0 |                       0 |                      0 |
+| 0000b849f77a49e4a4ce2b2a4ca5be3f |                      0 |                                  0 |                                             0 |                                          0 |                                 0 |                              0 |                           1 |                                      0 |                                              0 |                                   0 |                          0 |                                  0 |                     0 |                       0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   1 |                   0 |                              1 |                              0 |                              0 |                              0 |                              0 |                              0 |                            0 |                                         0 |                          0 |                                 0 |                          1 |                           0 |                  0 |                  0 |                       0 |                      0 |
+| 0000f46a3911fa3c0805444483337064 |                      0 |                                  0 |                                             0 |                                          0 |                                 0 |                              0 |                           1 |                                      0 |                                              0 |                                   0 |                          0 |                                  0 |                     0 |                       0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   1 |                   0 |                   0 |                   0 |                              1 |                              0 |                              0 |                              0 |                              0 |                              0 |                            0 |                                         0 |                          0 |                                 0 |                          0 |                           0 |                  1 |                  0 |                       0 |                      0 |
+| 0000f6ccb0745a6a4b88665a16c9f078 |                      0 |                                  0 |                                             0 |                                          0 |                                 0 |                              0 |                           1 |                                      0 |                                              0 |                                   0 |                          0 |                                  0 |                     0 |                       0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   1 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                              1 |                              0 |                              0 |                              0 |                              0 |                              0 |                            0 |                                         0 |                          0 |                                 0 |                          0 |                           0 |                  0 |                  0 |                       1 |                      0 |
+| 0004aac84e0df4da2b147fca70cf8255 |                      0 |                                  0 |                                             0 |                                          0 |                                 0 |                              0 |                           1 |                                      0 |                                              0 |                                   0 |                          0 |                                  0 |                     0 |                       0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   1 |                   0 |                              1 |                              0 |                              0 |                              0 |                              0 |                              0 |                            0 |                                         0 |                          0 |                                 0 |                          0 |                           0 |                  0 |                  0 |                       1 |                      0 |
+:end:
+
+
+#+begin_src jupyter-python
+#Percentage of columns which are categorical is used as weight parameter in embeddings later
+categorical_weight = len(cat_idx) / df.shape[1]
+
+#Embedding numerical & categorical
+fit1 = umap.UMAP(metric='l2').fit(numerical)
+fit2 = umap.UMAP(metric='dice').fit(categorical)
+
+#Augmenting the numerical embedding with categorical
+intersection = umap.umap_.general_simplicial_set_intersection(fit1.graph_, fit2.graph_, weight=categorical_weight)
+intersection = umap.umap_.reset_local_connectivity(intersection)
+embedding = umap.umap_.simplicial_set_embedding(fit1._raw_data, intersection, fit1.n_components, 
+                                                fit1._initial_alpha, fit1._a, fit1._b, 
+                                                fit1.repulsion_strength, fit1.negative_sample_rate, 
+                                                200, 'random', np.random, fit1.metric, 
+                                                fit1._metric_kwds, densmap=False, densmap_kwds={}, output_dens=False)
+
+
+plt.figure(figsize=(20, 10))
+plt.scatter(*embedding[0].T, s=2, cmap='Spectral', alpha=1.0)
+plt.show()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[13]:
+[[file:./obipy-resources/TfIVFr.png]]
+:end:
+
+* KMeans
+
+#+begin_src jupyter-python
+data = pd.get_dummies(dfk)
+data.head()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[14]:
+| customer_unique_id               |   nb_orders |   total_spend |   mean_payment_sequential |   mean_payment_installments |   min_review_score |   mean_estimated_delivery_days |   mean_actual_delivery_days |   total_items |   mean_nb_items |   freight_ratio |   mean_price_order |   payment_types_boleto |   payment_types_boleto credit_card |   payment_types_boleto credit_card debit_card |   payment_types_boleto credit_card voucher |   payment_types_boleto debit_card |   payment_types_boleto voucher |   payment_types_credit_card |   payment_types_credit_card debit_card |   payment_types_credit_card debit_card voucher |   payment_types_credit_card voucher |   payment_types_debit_card |   payment_types_debit_card voucher |   payment_types_other |   payment_types_voucher |   customer_state_AC |   customer_state_AL |   customer_state_AM |   customer_state_AP |   customer_state_BA |   customer_state_CE |   customer_state_DF |   customer_state_ES |   customer_state_GO |   customer_state_MA |   customer_state_MG |   customer_state_MS |   customer_state_MT |   customer_state_PA |   customer_state_PB |   customer_state_PE |   customer_state_PI |   customer_state_PR |   customer_state_RJ |   customer_state_RN |   customer_state_RO |   customer_state_RR |   customer_state_RS |   customer_state_SC |   customer_state_SE |   customer_state_SP |   customer_state_TO |   most_frequent_review_topic_0 |   most_frequent_review_topic_1 |   most_frequent_review_topic_2 |   most_frequent_review_topic_3 |   most_frequent_review_topic_4 |   most_frequent_review_topic_5 |   department_books_cds_media |   department_fashion_clothing_accessories |   department_flowers_gifts |   department_groceries_food_drink |   department_health_beauty |   department_home_furniture |   department_other |   department_sport |   department_technology |   department_toys_baby |
+|----------------------------------+-------------+---------------+---------------------------+-----------------------------+--------------------+--------------------------------+-----------------------------+---------------+-----------------+-----------------+--------------------+------------------------+------------------------------------+-----------------------------------------------+--------------------------------------------+-----------------------------------+--------------------------------+-----------------------------+----------------------------------------+------------------------------------------------+-------------------------------------+----------------------------+------------------------------------+-----------------------+-------------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+--------------------------------+--------------------------------+--------------------------------+--------------------------------+--------------------------------+--------------------------------+------------------------------+-------------------------------------------+----------------------------+-----------------------------------+----------------------------+-----------------------------+--------------------+--------------------+-------------------------+------------------------|
+| 0000366f3b9a7992bf8c76cfdf3221e2 |           1 |        141.9  |                         1 |                           8 |                  5 |                             11 |                           6 |             1 |               1 |            0.08 |             129.9  |                      0 |                                  0 |                                             0 |                                          0 |                                 0 |                              0 |                           1 |                                      0 |                                              0 |                                   0 |                          0 |                                  0 |                     0 |                       0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   1 |                   0 |                              0 |                              0 |                              1 |                              0 |                              0 |                              0 |                            0 |                                         0 |                          0 |                                 0 |                          0 |                           1 |                  0 |                  0 |                       0 |                      0 |
+| 0000b849f77a49e4a4ce2b2a4ca5be3f |           1 |         27.19 |                         1 |                           1 |                  4 |                              8 |                           3 |             1 |               1 |            0.3  |              18.9  |                      0 |                                  0 |                                             0 |                                          0 |                                 0 |                              0 |                           1 |                                      0 |                                              0 |                                   0 |                          0 |                                  0 |                     0 |                       0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   1 |                   0 |                              1 |                              0 |                              0 |                              0 |                              0 |                              0 |                            0 |                                         0 |                          0 |                                 0 |                          1 |                           0 |                  0 |                  0 |                       0 |                      0 |
+| 0000f46a3911fa3c0805444483337064 |           1 |         86.22 |                         1 |                           8 |                  3 |                             27 |                          26 |             1 |               1 |            0.2  |              69    |                      0 |                                  0 |                                             0 |                                          0 |                                 0 |                              0 |                           1 |                                      0 |                                              0 |                                   0 |                          0 |                                  0 |                     0 |                       0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   1 |                   0 |                   0 |                   0 |                              1 |                              0 |                              0 |                              0 |                              0 |                              0 |                            0 |                                         0 |                          0 |                                 0 |                          0 |                           0 |                  1 |                  0 |                       0 |                      0 |
+| 0000f6ccb0745a6a4b88665a16c9f078 |           1 |         43.62 |                         1 |                           4 |                  4 |                             31 |                          20 |             1 |               1 |            0.4  |              25.99 |                      0 |                                  0 |                                             0 |                                          0 |                                 0 |                              0 |                           1 |                                      0 |                                              0 |                                   0 |                          0 |                                  0 |                     0 |                       0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   1 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                              1 |                              0 |                              0 |                              0 |                              0 |                              0 |                            0 |                                         0 |                          0 |                                 0 |                          0 |                           0 |                  0 |                  0 |                       1 |                      0 |
+| 0004aac84e0df4da2b147fca70cf8255 |           1 |        196.89 |                         1 |                           6 |                  5 |                             20 |                          13 |             1 |               1 |            0.09 |             180    |                      0 |                                  0 |                                             0 |                                          0 |                                 0 |                              0 |                           1 |                                      0 |                                              0 |                                   0 |                          0 |                                  0 |                     0 |                       0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   1 |                   0 |                              1 |                              0 |                              0 |                              0 |                              0 |                              0 |                            0 |                                         0 |                          0 |                                 0 |                          0 |                           0 |                  0 |                  0 |                       1 |                      0 |
+:end:
+
+
+#+begin_src jupyter-python
+for c in numerical.columns:
+    pt = PowerTransformer()
+    data.loc[:, c] = pt.fit_transform(np.array(data[c]).reshape(-1, 1))
+
+data.head()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[15]:
+| customer_unique_id               |   nb_orders |   total_spend |   mean_payment_sequential |   mean_payment_installments |   min_review_score |   mean_estimated_delivery_days |   mean_actual_delivery_days |   total_items |   mean_nb_items |   freight_ratio |   mean_price_order |   payment_types_boleto |   payment_types_boleto credit_card |   payment_types_boleto credit_card debit_card |   payment_types_boleto credit_card voucher |   payment_types_boleto debit_card |   payment_types_boleto voucher |   payment_types_credit_card |   payment_types_credit_card debit_card |   payment_types_credit_card debit_card voucher |   payment_types_credit_card voucher |   payment_types_debit_card |   payment_types_debit_card voucher |   payment_types_other |   payment_types_voucher |   customer_state_AC |   customer_state_AL |   customer_state_AM |   customer_state_AP |   customer_state_BA |   customer_state_CE |   customer_state_DF |   customer_state_ES |   customer_state_GO |   customer_state_MA |   customer_state_MG |   customer_state_MS |   customer_state_MT |   customer_state_PA |   customer_state_PB |   customer_state_PE |   customer_state_PI |   customer_state_PR |   customer_state_RJ |   customer_state_RN |   customer_state_RO |   customer_state_RR |   customer_state_RS |   customer_state_SC |   customer_state_SE |   customer_state_SP |   customer_state_TO |   most_frequent_review_topic_0 |   most_frequent_review_topic_1 |   most_frequent_review_topic_2 |   most_frequent_review_topic_3 |   most_frequent_review_topic_4 |   most_frequent_review_topic_5 |   department_books_cds_media |   department_fashion_clothing_accessories |   department_flowers_gifts |   department_groceries_food_drink |   department_health_beauty |   department_home_furniture |   department_other |   department_sport |   department_technology |   department_toys_baby |
+|----------------------------------+-------------+---------------+---------------------------+-----------------------------+--------------------+--------------------------------+-----------------------------+---------------+-----------------+-----------------+--------------------+------------------------+------------------------------------+-----------------------------------------------+--------------------------------------------+-----------------------------------+--------------------------------+-----------------------------+----------------------------------------+------------------------------------------------+-------------------------------------+----------------------------+------------------------------------+-----------------------+-------------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+---------------------+--------------------------------+--------------------------------+--------------------------------+--------------------------------+--------------------------------+--------------------------------+------------------------------+-------------------------------------------+----------------------------+-----------------------------------+----------------------------+-----------------------------+--------------------+--------------------+-------------------------+------------------------|
+| 0000366f3b9a7992bf8c76cfdf3221e2 |           1 |      0.374093 |              -6.93889e-18 |                    1.51797  |           0.775131 |                      -1.58734  |                   -0.779069 |     -0.376858 |         -0.3363 |       -1.20296  |           0.488264 |                      0 |                                  0 |                                             0 |                                          0 |                                 0 |                              0 |                           1 |                                      0 |                                              0 |                                   0 |                          0 |                                  0 |                     0 |                       0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   1 |                   0 |                              0 |                              0 |                              1 |                              0 |                              0 |                              0 |                            0 |                                         0 |                          0 |                                 0 |                          0 |                           1 |                  0 |                  0 |                       0 |                      0 |
+| 0000b849f77a49e4a4ce2b2a4ca5be3f |           1 |     -1.96081  |              -6.93889e-18 |                   -0.980999 |          -0.547104 |                      -2.08703  |                   -1.70787  |     -0.376858 |         -0.3363 |        0.896971 |          -1.70225  |                      0 |                                  0 |                                             0 |                                          0 |                                 0 |                              0 |                           1 |                                      0 |                                              0 |                                   0 |                          0 |                                  0 |                     0 |                       0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   1 |                   0 |                              1 |                              0 |                              0 |                              0 |                              0 |                              0 |                            0 |                                         0 |                          0 |                                 0 |                          1 |                           0 |                  0 |                  0 |                       0 |                      0 |
+| 0000f46a3911fa3c0805444483337064 |           1 |     -0.252552 |              -6.93889e-18 |                    1.51797  |          -1.3212   |                       0.453882 |                    1.44499  |     -0.376858 |         -0.3363 |        0.13626  |          -0.195004 |                      0 |                                  0 |                                             0 |                                          0 |                                 0 |                              0 |                           1 |                                      0 |                                              0 |                                   0 |                          0 |                                  0 |                     0 |                       0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   1 |                   0 |                   0 |                   0 |                              1 |                              0 |                              0 |                              0 |                              0 |                              0 |                            0 |                                         0 |                          0 |                                 0 |                          0 |                           0 |                  1 |                  0 |                       0 |                      0 |
+| 0000f6ccb0745a6a4b88665a16c9f078 |           1 |     -1.21624  |              -6.93889e-18 |                    0.94405  |          -0.547104 |                       0.87373  |                    1.03269  |     -0.376858 |         -0.3363 |        1.4507   |          -1.31973  |                      0 |                                  0 |                                             0 |                                          0 |                                 0 |                              0 |                           1 |                                      0 |                                              0 |                                   0 |                          0 |                                  0 |                     0 |                       0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   1 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                              1 |                              0 |                              0 |                              0 |                              0 |                              0 |                            0 |                                         0 |                          0 |                                 0 |                          0 |                           0 |                  0 |                  0 |                       1 |                      0 |
+| 0004aac84e0df4da2b147fca70cf8255 |           1 |      0.752605 |              -6.93889e-18 |                    1.31269  |           0.775131 |                      -0.350406 |                    0.365811 |     -0.376858 |         -0.3363 |       -1.06748  |           0.82579  |                      0 |                                  0 |                                             0 |                                          0 |                                 0 |                              0 |                           1 |                                      0 |                                              0 |                                   0 |                          0 |                                  0 |                     0 |                       0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   0 |                   1 |                   0 |                              1 |                              0 |                              0 |                              0 |                              0 |                              0 |                            0 |                                         0 |                          0 |                                 0 |                          0 |                           0 |                  0 |                  0 |                       1 |                      0 |
+:end:
+
+#+begin_src jupyter-python
+inertias = []
+
+for k in range(2,15):
+    print(f'{k} clusters')
+    model = KMeans(n_clusters=k)
+    model.fit(data)
+    inertias.append(model.inertia_)
+
+plt.figure(figsize=(15, 10))
+plt.style.use('bmh')
+plt.plot(range(2,15), inertias, '-o')
+plt.xlabel('Number of clusters, k')
+plt.ylabel('Inertia')
+plt.xticks(range(2, 20))
+plt.show()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[16]:
+[[file:./obipy-resources/mzRkPC.png]]
+:end:
+
+- Nous choissons 6 clusters
+
+#+begin_src jupyter-python
+#Actual Clustering
+kmeans = KMeans(n_clusters=7).fit(data)
+kmeans_labels = kmeans.labels_
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[17]:
+:end:
+
+
+#+begin_src jupyter-python
+fig, ax = plt.subplots()
+fig.set_size_inches((20, 10))
+scatter = ax.scatter(embedding[0][:, 0], embedding[0][:, 1], s=2, c=kmeans_labels, cmap='tab20b', alpha=1.0)
+
+# produce a legend with the unique colors from the scatter
+legend1 = ax.legend(*scatter.legend_elements(num=7),
+                    loc="lower left", title="Classes")
+ax.add_artist(legend1)
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[18]:
+: <matplotlib.legend.Legend at 0x16098a070>
+[[file:./obipy-resources/nzTatg.png]]
+:end:
+
+* KPrototypes
+
+#+begin_src jupyter-python
+df.info()
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[23]:
+:end:
+
+#+begin_src jupyter-python
+categorical = df.select_dtypes(include='category')
+numerical = df.select_dtypes(include='float64')
+litteral = df.select_dtypes(include='object')
+
+dfk = df.drop(litteral.columns, axis=1)
+
+for c in numerical.columns:
+    pt = PowerTransformer()
+    dfk.loc[:, c] = pt.fit_transform(np.array(data[c]).reshape(-1, 1))
+
+cat_idx = []
+for c in categorical.columns:
+    cat_idx.append(dfk.columns.get_loc(c))
+    numericalize(dfk, dfk[c], f'_{c}', None)
+
+dfk.drop(dfk.columns[cat_idx], axis=1, inplace=True)
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[25]:
+:end:
+
+
+#+begin_src jupyter-python
+cat_idx = []
+for c in dfk.select_dtypes(include='int8').columns:
+    cat_idx.append(dfk.columns.get_loc(c))
+
+cat_idx
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[26]:
+: [11, 12, 13, 14]
+:end:
+
+#+begin_src jupyter-python :async yes
+kp = KPrototypes(n_clusters=6, init='Cao', random_state=RANDOM_STATE, verbose=2, n_jobs=-1)
+clusters = kp.fit_predict(dfk, categorical=cat_idx)
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[27]:
+:end:
+
+#+begin_src jupyter-python
+fig, ax = plt.subplots()
+fig.set_size_inches((20, 10))
+scatter = ax.scatter(embedding[0][:, 0], embedding[0][:, 1], s=2, c=clusters, cmap='tab20b', alpha=1.0)
+
+# produce a legend with the unique colors from the scatter
+legend1 = ax.legend(*scatter.legend_elements(num=7),
+                    loc="lower left", title="Classes")
+ax.add_artist(legend1)
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[28]:
+: <matplotlib.legend.Legend at 0x156711b20>
+[[file:./obipy-resources/bpGHGL.png]]
+:end:
+
+* Evaluation
+** KMeans
+
+#+begin_src jupyter-python
+dfk.info()
+#+end_src
+
+#+begin_src jupyter-python :results output
+#KMeans clusters
+clf_km = LGBMClassifier()
+cv_scores_km = cross_val_score(clf_km, dfk, kmeans_labels, scoring='f1_weighted')
+print(f'CV F1 score for K-Means clusters is {np.mean(cv_scores_km)}')
+#+end_src
+
+#+RESULTS:
+:results:
+CV F1 score for K-Means clusters is 0.9808997543886082
+:end:
+
+
+#+begin_src jupyter-python
+#Fit the model
+clf_km.fit(dfk, kmeans_labels)
+
+#SHAP values
+explainer_km = shap.TreeExplainer(clf_km)
+shap_values_km = explainer_km.shap_values(dfk)
+shap.summary_plot(shap_values_km, dfk, plot_type="bar", plot_size=(15, 10))
+#+end_src
+
+#+RESULTS:
+:results:
+# Out[30]:
+[[file:./obipy-resources/8VWDCD.png]]
+:end:
+
+** KPrototypes
+
+#+begin_src jupyter-python :results output
+clf_kp = LGBMClassifier()
+cv_scores_kp = cross_val_score(clf_kp, dfk, clusters, scoring='f1_weighted')
+print(f'CV F1 score for K-Prototypes clusters is {np.mean(cv_scores_kp)}')
+#+end_src
+
+#+RESULTS:
+:results:
+CV F1 score for K-Prototypes clusters is 0.982102105749876
+:end:
+
+#+begin_src jupyter-python
+clf_kp.fit(dfk, clusters)
+explainer_kp = shap.TreeExplainer(clf_kp)
+shap_values_kp = explainer_kp.shap_values(dfk)
+shap.summary_plot(shap_values_kp, dfk, plot_type="bar", plot_size=(15, 10))
+#+end_src
+
+* Appendix
+** t-SNE
+
+#+begin_src jupyter-python
+tsne = TSNE(n_components=2, init='pca', random_state=RANDOM_STATE, verbose=2, n_jobs=-1)
+X_tsne = tsne.fit_transform(dfk)
+#+end_src
+
+#+begin_src jupyter-python
+columns = ['DIM' + str(c) for c in range(1, X_tsne.shape[1]+1, 1)]
+X_tsne = pd.DataFrame(X_tsne, index=dfk.index, columns=columns)
+X_tsne.head()
+#+end_src
+
+#+begin_src jupyter-python
+X_tsne.plot(x='DIM1', y='DIM2', kind='scatter', figsize=(10, 10), cmap='Set1')
+#+end_src
+
+#+begin_src jupyter-python
+# La divergence de Kullback-Leibler après optimisation
+tsne.kl_divergence_
+#+end_src
+
+#+begin_src jupyter-python
+tsne = TSNE(n_components=3, init='pca', perplexity=45, random_state=RANDOM_STATE, n_jobs=-1)
+X_tsne = tsne.fit_transform(dfk)
+columns = ['DIM' + str(c) for c in range(1, X_tsne.shape[1]+1, 1)]
+X_tsne = pd.DataFrame(X_tsne, index=dfk.index, columns=columns)
+X_tsne.head()
+#+end_src
+
+#+begin_src jupyter-python
+fig = plt.figure(figsize=(10, 10))
+ax = fig.add_subplot(projection='3d')
+ax.scatter(X_tsne['DIM1'], X_tsne['DIM2'], X_tsne['DIM3'], marker='o', s=30, edgecolor='k', cmap='Set1')
+ax.set_xlabel('DIM1')
+ax.set_ylabel('DIM2')
+ax.set_zlabel('DIM3')
+ax.view_init(elev=15, azim=45)
+#+end_src
+
+#+begin_src jupyter-python
+tsne.kl_divergence_
+#+end_src
+
+** PCA
+
+#+begin_src jupyter-python
+pca = PCA()
+X_pca = pca.fit_transform(dfk)
+pca_columns = ['PC' + str(c) for c in range(1, X_pca.shape[1]+1, 1)]
+X_pca = pd.DataFrame(X_pca, index=dfk.index, columns=pca_columns)
+X_pca.head()
+#+end_src
+
+#+begin_src jupyter-python
+pca.explained_variance_ratio_
+#+end_src
+
+#+begin_src jupyter-python
+explained_variance = pd.Series(dict(zip(X_pca.columns, 100.0*pca.explained_variance_ratio_)))
+explained_variance.head()
+#+end_src
+
+#+begin_src jupyter-python
+explained_variance.plot(kind='bar', figsize=(15, 4), rot=90, ylabel='Explained variance')
+#+end_src
+
+#+begin_src jupyter-python
+X_pca.plot(x='PC1', y='PC2', kind='scatter', figsize=(10, 10), color='gray')
+#+end_src
+
+#+begin_src jupyter-python
+fig = plt.figure(figsize=(10, 10))
+ax = fig.add_subplot(projection='3d')
+ax.scatter(X_pca['PC1'], X_pca['PC2'], X_pca['PC3'], marker='o', s=30, edgecolor='k', cmap='Set1')
+ax.set_xlabel('PC1 - ' + '{:.1f}%'.format(explained_variance['PC1']))
+ax.set_ylabel('PC2 - ' + '{:.1f}%'.format(explained_variance['PC2']))
+ax.set_zlabel('PC3 - ' + '{:.1f}%'.format(explained_variance['PC3']))
+ax.view_init(elev=15, azim=45)
+#+end_src
+
+* Local Variables                                                  :noexport:
+# Local Variables:
+# eval: (setenv "PATH" "/Library/TeX/texbin/:$PATH" t)
+# org-ref-default-bibliography: ("./olist.bib")
+# End:
+
